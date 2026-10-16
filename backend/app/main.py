@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import admin, auth, author
 from .config import get_settings
-from .db import Base, SessionLocal, engine
+from .db import engine, init_db
 from .errors import register_error_handlers
 from .models import Category, Priority, TicketStatus
 from .seed import seed
@@ -19,9 +19,7 @@ FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(engine)
-    with SessionLocal() as db:
-        seed(db)
+    init_db(seed)
     yield
 
 
@@ -35,7 +33,14 @@ app.include_router(admin.router)
 
 @app.get("/api/health", tags=["meta"])
 def health():
-    return {"status": "ok", "ai_enabled": bool(get_settings().ai_api_key), "provider": get_settings().ai_provider, "model": get_settings().ai_model}
+    from sqlalchemy import text
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:  # noqa: BLE001
+        db_ok = False
+    return {"status": "ok" if db_ok else "degraded", "db": engine.dialect.name, "db_ok": db_ok, "ai_enabled": bool(get_settings().ai_api_key), "provider": get_settings().ai_provider, "model": get_settings().ai_model}
 
 
 @app.get("/api/meta", tags=["meta"])

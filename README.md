@@ -5,8 +5,8 @@ A web app with an **Author Portal** and an **Admin Support Desk**, with AI-assis
 - **Live demo:** https://bookleaf-support-portal-pi.vercel.app (Vercel, Python runtime)
   - Author: `priya.sharma@email.com` / `author123`
   - Admin: `admin@bookleafpub.com` / `admin123`
-  - Demo limitation: the live demo currently uses SQLite in `/tmp` on Vercel, reseeded from the sample data on each cold start, so tickets created there are temporary (they last while the serverless instance is warm). Set `DATABASE_URL` / `POSTGRES_URL` (e.g. Neon via the Vercel Marketplace) and the app uses Postgres with persistent data, no code change needed. AI runs on Google Gemini (`GEMINI_API_KEY` is set on Vercel); if Gemini is unavailable it falls back to the keyword/template rules.
-- **Stack:** FastAPI (Python 3.12+) · SQLAlchemy 2 · SQLite (Postgres-ready via `DATABASE_URL`) · Vue 3 SPA (no build step) · Google Gemini `gemini-3.6-flash` (fallback `gemini-3.5-flash`; OpenAI-compatible APIs also supported)
+  - Data lives in a free Supabase Postgres (Mumbai, `ap-south-1`) through the transaction pooler; tables are created and the sample data seeded once, on first start, under a Postgres advisory lock. AI runs on Google Gemini (`GEMINI_API_KEY`); if Gemini is unavailable it falls back to the keyword/template rules.
+- **Stack:** FastAPI (Python 3.12+) · SQLAlchemy 2 · Postgres on Supabase in production, SQLite locally (`DATABASE_URL`) · Vue 3 SPA (no build step) · Google Gemini `gemini-3.6-flash` (fallback `gemini-3.5-flash`; OpenAI-compatible APIs also supported)
 
 ## Test logins (seeded from `bookleaf_sample_data.json`)
 
