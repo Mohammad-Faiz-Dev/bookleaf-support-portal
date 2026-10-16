@@ -2,7 +2,10 @@
 
 A web app with an **Author Portal** and an **Admin Support Desk**, with AI-assisted ticket triage and reply drafting grounded in the BookLeaf Knowledge Base.
 
-- **Live demo:** _TBD: add the deployed URL here_
+- **Live demo:** https://bookleaf-support-portal-pi.vercel.app (Vercel, Python runtime)
+  - Author: `priya.sharma@email.com` / `author123`
+  - Admin: `admin@bookleafpub.com` / `admin123`
+  - Demo limitation: the live demo currently uses SQLite in `/tmp` on Vercel, reseeded from the sample data on each cold start, so tickets created there are temporary (they last while the serverless instance is warm). Set `DATABASE_URL` / `POSTGRES_URL` (e.g. Neon via the Vercel Marketplace) and the app uses Postgres with persistent data, no code change needed. AI runs on the keyword/template fallback unless `OPENAI_API_KEY` is set.
 - **Stack:** FastAPI (Python 3.12+) · SQLAlchemy 2 · SQLite (Postgres-ready via `DATABASE_URL`) · Vue 3 SPA (no build step) · OpenAI `gpt-4o-mini` (any OpenAI-compatible API)
 
 ## Test logins (seeded from `bookleaf_sample_data.json`)

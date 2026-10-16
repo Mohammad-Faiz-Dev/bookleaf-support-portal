@@ -6,9 +6,23 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _database_url() -> str:
+    """DATABASE_URL / POSTGRES_URL (e.g. Neon) if set; else SQLite (in /tmp on Vercel, which is ephemeral)."""
+    url = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
+    if url:
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        if url.startswith("postgresql://"):
+            url = "postgresql+psycopg://" + url[len("postgresql://"):]
+        return url
+    if os.getenv("VERCEL"):
+        return "sqlite:////tmp/bookleaf.db"
+    return f"sqlite:///{BASE_DIR / 'bookleaf.db'}"
+
+
 class Settings:
     def __init__(self) -> None:
-        self.database_url = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'bookleaf.db'}")
+        self.database_url = _database_url()
         self.jwt_secret = os.getenv("JWT_SECRET", "dev-only-insecure-secret-change-me-in-production")
         self.jwt_ttl_minutes = int(os.getenv("JWT_TTL_MINUTES", "720"))
         # AI provider (any OpenAI-compatible chat-completions endpoint)
