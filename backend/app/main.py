@@ -35,7 +35,7 @@ app.include_router(admin.router)
 
 @app.get("/api/health", tags=["meta"])
 def health():
-    return {"status": "ok", "ai_enabled": bool(get_settings().ai_api_key), "model": get_settings().ai_model}
+    return {"status": "ok", "ai_enabled": bool(get_settings().ai_api_key), "provider": get_settings().ai_provider, "model": get_settings().ai_model}
 
 
 @app.get("/api/meta", tags=["meta"])

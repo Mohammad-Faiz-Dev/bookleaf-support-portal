@@ -70,3 +70,17 @@ def test_draft_prompt_sends_only_relevant_kb():
 def test_kb_context_has_tone_for_every_category():
     for cat in ["Royalty & Payments", "General Inquiry", "unknown"]:
         assert "Tone:" in context_for(cat)
+
+
+def test_gemini_provider_request_and_parse():
+    seen = {}
+
+    def handler(req):
+        seen["url"], seen["key"] = str(req.url), req.headers.get("x-goog-api-key")
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": '{"ok": 1}'}]}}]})
+
+    s = Settings()
+    s.ai_provider, s.ai_api_key, s.ai_model = "gemini", "g-key", "gemini-2.5-flash"
+    s.ai_base_url = "https://generativelanguage.googleapis.com/v1beta"
+    out = LLMClient(s, transport=httpx.MockTransport(handler)).chat("sys", "user", max_tokens=50, json_mode=True)
+    assert out == '{"ok": 1}' and seen["key"] == "g-key" and seen["url"].endswith("gemini-2.5-flash:generateContent")

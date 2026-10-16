@@ -5,6 +5,7 @@ import pytest
 
 _db = tempfile.NamedTemporaryFile(suffix=".db", delete=False).name
 os.environ["DATABASE_URL"] = f"sqlite:///{_db}"
+os.environ["GEMINI_API_KEY"] = ""
 os.environ["OPENAI_API_KEY"] = ""  # tests never hit a real AI provider
 
 from fastapi.testclient import TestClient  # noqa: E402

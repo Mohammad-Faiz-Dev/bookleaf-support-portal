@@ -25,10 +25,19 @@ class Settings:
         self.database_url = _database_url()
         self.jwt_secret = os.getenv("JWT_SECRET", "dev-only-insecure-secret-change-me-in-production")
         self.jwt_ttl_minutes = int(os.getenv("JWT_TTL_MINUTES", "720"))
-        # AI provider (any OpenAI-compatible chat-completions endpoint)
-        self.ai_api_key = os.getenv("OPENAI_API_KEY", "")
-        self.ai_base_url = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
-        self.ai_model = os.getenv("AI_MODEL", "gpt-4o-mini")
+        # AI provider: Google Gemini if GEMINI_API_KEY is set, else any OpenAI-compatible endpoint
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        self.ai_provider = os.getenv("AI_PROVIDER", "gemini" if gemini_key else "openai")
+        if self.ai_provider == "gemini":
+            self.ai_api_key = gemini_key
+            self.ai_base_url = os.getenv("AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
+            self.ai_model = os.getenv("AI_MODEL", "gemini-3.6-flash")
+            # tried in order if the primary model is overloaded (429/503) or retired (404)
+            self.ai_fallback_models = [m for m in os.getenv("AI_FALLBACK_MODELS", "gemini-3.5-flash").split(",") if m]
+        else:
+            self.ai_api_key = os.getenv("OPENAI_API_KEY", "")
+            self.ai_base_url = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
+            self.ai_model = os.getenv("AI_MODEL", "gpt-4o-mini")
         self.ai_timeout_s = float(os.getenv("AI_TIMEOUT_SECONDS", "20"))
         self.seed_file = Path(os.getenv("SEED_FILE", str(BASE_DIR / "bookleaf_sample_data.json")))
         self.default_author_password = os.getenv("SEED_AUTHOR_PASSWORD", "author123")

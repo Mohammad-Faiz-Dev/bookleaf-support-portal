@@ -49,13 +49,16 @@ createApp({
       const t = await api('/api/me/tickets', { method: 'POST', body: this.ticketForm });
       this.ticketForm = { book_id: null, subject: '', description: '', attachment_name: null };
       await this.openTicket(t.id); this.flash = `Ticket #${t.id} created. We usually reply within 24–48 hours.`; }); },
-    async openTicket(id) { this.view = 'ticket'; this.current = await api(`/api/me/tickets/${id}`); },
+    async openTicket(id) { this.error = '';
+      try { const t = await api(`/api/me/tickets/${id}`); this.current = t; this.view = 'ticket'; }
+      catch (e) { this.error = e.message; if (e.status === 401) this.logout(); } },
     async authorReply() { await this.run(async () => { this.current = await api(`/api/me/tickets/${this.current.id}/messages`, { method: 'POST', body: { body: this.replyText } }); this.replyText = ''; }); },
     async loadQueue() { if (!this.isAdmin) return;
       const qs = new URLSearchParams(Object.entries(this.filters).filter(([, v]) => v)).toString();
       try { [this.queue, this.stats] = await Promise.all([api(`/api/admin/tickets?${qs}`), api('/api/admin/stats')]); } catch (e) { this.error = e.message; } },
-    async openAdmin(id) { this.view = 'admin-ticket'; this.replyText = ''; this.noteText = ''; this.draftSource = '';
-      this.current = await api(`/api/admin/tickets/${id}`); this.loadDraft(false); },
+    async openAdmin(id) { this.replyText = ''; this.noteText = ''; this.draftSource = ''; this.error = '';
+      try { this.current = await api(`/api/admin/tickets/${id}`); this.view = 'admin-ticket'; this.loadDraft(false); }
+      catch (e) { this.error = e.message; if (e.status === 401) this.logout(); } },
     async loadDraft(regenerate) { this.draftLoading = true;
       try { const d = await api(`/api/admin/tickets/${this.current.id}/draft?regenerate=${regenerate}`); this.replyText = d.draft; this.draftSource = d.source; }
       catch (e) { this.draftSource = ''; this.error = 'Could not generate a draft. Please write the reply manually.'; }

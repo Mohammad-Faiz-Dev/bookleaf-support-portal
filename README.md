@@ -5,8 +5,8 @@ A web app with an **Author Portal** and an **Admin Support Desk**, with AI-assis
 - **Live demo:** https://bookleaf-support-portal-pi.vercel.app (Vercel, Python runtime)
   - Author: `priya.sharma@email.com` / `author123`
   - Admin: `admin@bookleafpub.com` / `admin123`
-  - Demo limitation: the live demo currently uses SQLite in `/tmp` on Vercel, reseeded from the sample data on each cold start, so tickets created there are temporary (they last while the serverless instance is warm). Set `DATABASE_URL` / `POSTGRES_URL` (e.g. Neon via the Vercel Marketplace) and the app uses Postgres with persistent data, no code change needed. AI runs on the keyword/template fallback unless `OPENAI_API_KEY` is set.
-- **Stack:** FastAPI (Python 3.12+) · SQLAlchemy 2 · SQLite (Postgres-ready via `DATABASE_URL`) · Vue 3 SPA (no build step) · OpenAI `gpt-4o-mini` (any OpenAI-compatible API)
+  - Demo limitation: the live demo currently uses SQLite in `/tmp` on Vercel, reseeded from the sample data on each cold start, so tickets created there are temporary (they last while the serverless instance is warm). Set `DATABASE_URL` / `POSTGRES_URL` (e.g. Neon via the Vercel Marketplace) and the app uses Postgres with persistent data, no code change needed. AI runs on Google Gemini (`GEMINI_API_KEY` is set on Vercel); if Gemini is unavailable it falls back to the keyword/template rules.
+- **Stack:** FastAPI (Python 3.12+) · SQLAlchemy 2 · SQLite (Postgres-ready via `DATABASE_URL`) · Vue 3 SPA (no build step) · Google Gemini `gemini-3.6-flash` (fallback `gemini-3.5-flash`; OpenAI-compatible APIs also supported)
 
 ## Test logins (seeded from `bookleaf_sample_data.json`)
 
@@ -22,7 +22,7 @@ A web app with an **Author Portal** and an **Admin Support Desk**, with AI-assis
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r backend/requirements.txt
-cp .env.example .env          # optional: add OPENAI_API_KEY; without it the app uses the rules fallback
+cp .env.example .env          # optional: add GEMINI_API_KEY (or OPENAI_API_KEY); without it the app uses the rules fallback
 cd backend
 set -a; [ -f ../.env ] && . ../.env; set +a
 uvicorn app.main:app --reload --port 8000
@@ -32,7 +32,7 @@ Open http://localhost:8000 for the app, and http://localhost:8000/docs for the i
 
 Tests: `cd backend && python -m pytest -q`. They cover auth, RBAC, validation, the full ticket lifecycle, internal-note privacy, AI fallback on 429/5xx, and KB scoping in prompts. No real AI calls are made.
 
-Docker: `docker build -t bookleaf . && docker run -p 8000:8000 -e OPENAI_API_KEY=... -e JWT_SECRET=... bookleaf`. `render.yaml` deploys the same image to Render.
+Docker: `docker build -t bookleaf . && docker run -p 8000:8000 -e GEMINI_API_KEY=... -e JWT_SECRET=... bookleaf`. `render.yaml` deploys the same image to Render.
 
 ## Architecture
 
@@ -76,9 +76,9 @@ backend/app/
 **Graceful degradation**
 - No key, timeout, HTTP 429 or 5xx gives one retry with backoff, then `LLMUnavailable`. Tickets still get created and classified by the keyword rules, and admins get a **template draft filled with the author's real figures**, labelled "Template draft (AI unavailable)". They can always write manually.
 
-**Key security:** the key is read from `OPENAI_API_KEY` on the server only (`config.py`). It's never sent to the browser and never committed (`.env` is git-ignored, and `.env.example` has no secrets). `/api/health` only reports `ai_enabled: true/false`.
+**Key security:** the key is read from `GEMINI_API_KEY` (or `OPENAI_API_KEY`) on the server only (`config.py`). It's never sent to the browser and never committed (`.env` is git-ignored, and `.env.example` has no secrets). `/api/health` only reports `ai_enabled: true/false`.
 
-**Model choice:** `gpt-4o-mini` is cheap (fractions of a paisa per ticket), fast, reliable at JSON-mode classification, and good at short, empathetic business writing, which is exactly this workload. The client targets the OpenAI-compatible Chat Completions API, so Claude Haiku (via a compatible gateway), Groq or a self-hosted model is a config change (`AI_BASE_URL`, `AI_MODEL`).
+**Model choice:** Google Gemini `gemini-3.6-flash` via the `generateContent` REST API with JSON output (`responseMimeType: application/json`) for classification and thinking turned off for speed. It's fast, has a free tier, and is good at short, empathetic business writing. If it's overloaded (429/503) or retired (404), the client tries `gemini-3.5-flash` next and then falls back to the keyword/template rules, so a ticket is never blocked on the AI. Setting `OPENAI_API_KEY` (and no Gemini key) switches to any OpenAI-compatible Chat Completions API instead (`AI_BASE_URL`, `AI_MODEL`).
 
 ## API reference
 
