@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BookLeaf Author Support</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<div id="app" v-cloak>
+  <!-- Login -->
+  <div v-if="!user" class="login">
+    <form class="card" @submit.prevent="login">
+      <h1>📚 BookLeaf</h1><p class="muted">Author Support Portal</p>
+      <label>Email<input v-model.trim="loginForm.email" type="email" required autocomplete="username" /></label>
+      <label>Password<input v-model="loginForm.password" type="password" required autocomplete="current-password" /></label>
+      <p v-if="error" class="err">{{ error }}</p>
+      <button :disabled="busy">Log in</button>
+      <details class="muted small"><summary>Demo accounts</summary>
+        Author: priya.sharma@email.com / author123 (any seeded author email works)<br/>
+        Admin: admin@bookleafpub.com / admin123</details>
+    </form>
+  </div>
+
+  <template v-else>
+    <header>
+      <strong>📚 BookLeaf <span class="muted">{{ isAdmin ? 'Support Desk' : 'Author Portal' }}</span></strong>
+      <nav>
+        <template v-if="!isAdmin">
+          <a :class="{on: view==='books'}" @click="go('books')">My Books</a>
+          <a :class="{on: view==='new'}" @click="go('new')">New Query</a>
+          <a :class="{on: view==='tickets' || view==='ticket'}" @click="go('tickets')">My Tickets</a>
+        </template>
+        <template v-else><a :class="{on: true}" @click="go('queue')">Ticket Queue</a></template>
+      </nav>
+      <span class="muted">{{ user.name }} · <a @click="logout">Log out</a></span>
+    </header>
+    <main>
+      <p v-if="error" class="err">{{ error }}</p>
+      <p v-if="flash" class="ok">{{ flash }}</p>
+
+      <!-- AUTHOR: books -->
+      <section v-if="view==='books'">
+        <h2>My Books</h2>
+        <p v-if="!books.length" class="empty">You don't have any books with us yet.</p>
+        <div class="grid">
+          <div v-for="b in books" :key="b.book_id" class="card book">
+            <div class="row"><h3>{{ b.title }}</h3><span :class="['pill', b.status.startsWith('Published') ? 'green':'amber']">{{ b.status }}</span></div>
+            <p class="muted small">{{ b.genre }} · ISBN {{ b.isbn || '—' }} · Published {{ b.publication_date || 'Not yet' }} · MRP {{ inr(b.mrp) }}</p>
+            <div class="stats">
+              <div><b>{{ b.total_copies_sold }}</b><span>Copies sold</span></div>
+              <div><b>{{ inr(b.total_royalty_earned) }}</b><span>Royalty earned</span></div>
+              <div><b>{{ inr(b.royalty_paid) }}</b><span>Paid</span></div>
+              <div><b :class="{amber: b.royalty_pending>0}">{{ inr(b.royalty_pending) }}</b><span>Pending</span></div>
+            </div>
+            <p class="small muted" v-if="!b.status.startsWith('Published')">Sales and royalties appear once your book is live.</p>
+            <p class="small muted" v-else>Last payout: {{ b.last_royalty_payout_date || 'No payout yet' }} · {{ (b.available_on||[]).join(', ') }}</p>
+            <button class="ghost small" @click="newFor(b.book_id)">Ask about this book</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- AUTHOR: new ticket -->
+      <section v-if="view==='new'">
+        <h2>Submit a Support Query</h2>
+        <form class="card form" @submit.prevent="createTicket">
+          <label>Which book is this about?
+            <select v-model="ticketForm.book_id">
+              <option :value="null">General / Account Level</option>
+              <option v-for="b in books" :value="b.book_id">{{ b.title }}</option>
+            </select></label>
+          <label>Subject<input v-model="ticketForm.subject" maxlength="200" required minlength="5" placeholder="e.g. Royalty for Q3 not received" /></label>
+          <label>Details<textarea v-model="ticketForm.description" rows="6" required minlength="10" maxlength="5000" placeholder="Tell us what happened, with any dates or amounts you have."></textarea></label>
+          <label>Attachment (optional)<input type="file" @change="e => ticketForm.attachment_name = e.target.files[0]?.name || null" />
+            <span class="small muted">Only the file name is recorded in this demo.</span></label>
+          <button :disabled="busy">Submit query</button>
+        </form>
+      </section>
+
+      <!-- AUTHOR: ticket list -->
+      <section v-if="view==='tickets'">
+        <h2>My Tickets <span class="small muted">· updates automatically</span></h2>
+        <p v-if="!tickets.length" class="empty">No tickets yet. <a @click="go('new')">Raise your first query</a>.</p>
+        <table v-else><thead><tr><th>#</th><th>Subject</th><th>Book</th><th>Status</th><th>Replies</th><th>Updated</th></tr></thead>
+          <tbody><tr v-for="t in tickets" :key="t.id" @click="openTicket(t.id)" class="click">
+            <td>{{ t.id }}</td><td>{{ t.subject }}</td><td>{{ t.book_title || 'General' }}</td>
+            <td><span :class="['pill', statusColor(t.status)]">{{ t.status }}</span></td><td>{{ t.response_count }}</td><td>{{ ago(t.updated_at) }}</td></tr></tbody></table>
+      </section>
+
+      <!-- AUTHOR: ticket detail -->
+      <section v-if="view==='ticket' && current">
+        <a @click="go('tickets')">← All tickets</a>
+        <div class="card">
+          <div class="row"><h2>#{{ current.id }} {{ current.subject }}</h2><span :class="['pill', statusColor(current.status)]">{{ current.status }}</span></div>
+          <p class="muted small">{{ current.book_title || 'General / Account Level' }} · opened {{ fmt(current.created_at) }}</p>
+          <div class="msg author"><b>You</b><p>{{ current.description }}</p><p v-if="current.attachment_name" class="small muted">📎 {{ current.attachment_name }}</p></div>
+          <div v-for="m in current.messages" :class="['msg', m.sender_role]"><b>{{ m.sender_role==='admin' ? 'BookLeaf Support' : 'You' }}</b> <span class="small muted">{{ fmt(m.created_at) }}</span><p>{{ m.body }}</p></div>
+          <p v-if="!current.messages.length" class="muted small">Our team will reply here. This page updates automatically.</p>
+          <form @submit.prevent="authorReply" class="reply"><textarea v-model="replyText" rows="3" placeholder="Add more details or reply…"></textarea><button :disabled="busy || !replyText.trim()">Send</button></form>
+        </div>
+      </section>
+
+      <!-- ADMIN: queue -->
+      <section v-if="view==='queue'">
+        <div class="kpis">
+          <div v-for="p in meta.priorities" :class="['kpi', p.toLowerCase()]"><b>{{ stats.open_by_priority?.[p] || 0 }}</b><span>{{ p }} open</span></div>
+          <div class="kpi"><b>{{ stats.by_status?.Open || 0 }}</b><span>Unanswered</span></div>
+        </div>
+        <div class="filters">
+          <select v-model="filters.status"><option value="">All statuses</option><option v-for="s in meta.statuses">{{ s }}</option></select>
+          <select v-model="filters.category"><option value="">All categories</option><option v-for="c in meta.categories">{{ c }}</option></select>
+          <select v-model="filters.priority"><option value="">All priorities</option><option v-for="p in meta.priorities">{{ p }}</option></select>
+          <select v-model="filters.assigned"><option value="">Anyone</option><option value="me">Assigned to me</option><option value="unassigned">Unassigned</option></select>
+          <label class="inline">From <input type="date" v-model="filters.date_from" /></label>
+          <label class="inline">To <input type="date" v-model="filters.date_to" /></label>
+          <input v-model="filters.q" placeholder="Search…" />
+        </div>
+        <p v-if="!queue.length" class="empty">No tickets match these filters. 🎉</p>
+        <table v-else><thead><tr><th>#</th><th>Priority</th><th>Subject</th><th>Author</th><th>Category</th><th>Status</th><th>Age</th><th>Owner</th></tr></thead>
+          <tbody><tr v-for="t in queue" :key="t.id" @click="openAdmin(t.id)" :class="['click', {stale: t.age_hours>48 && ['Open','In Progress'].includes(t.status)}]">
+            <td>{{ t.id }}</td><td><span :class="['pill', t.priority.toLowerCase()]">{{ t.priority }}</span></td>
+            <td>{{ t.subject }}<div class="small muted">{{ t.book_title || 'General' }}</div></td><td>{{ t.author_name }}</td>
+            <td>{{ t.category }} <span class="src" :title="srcTitle(t.category_source)">{{ t.category_source }}</span></td>
+            <td><span :class="['pill', statusColor(t.status)]">{{ t.status }}</span></td><td>{{ ageLabel(t.age_hours) }}</td><td>{{ t.assigned_to || '—' }}</td></tr></tbody></table>
+      </section>
+
+      <!-- ADMIN: ticket -->
+      <section v-if="view==='admin-ticket' && current">
+        <a @click="go('queue')">← Queue</a>
+        <div class="two">
+          <div class="card">
+            <div class="row"><h2>#{{ current.id }} {{ current.subject }}</h2><span :class="['pill', current.priority.toLowerCase()]">{{ current.priority }}</span></div>
+            <p class="muted small">{{ current.author_name }} ({{ current.author_email }}) · {{ fmt(current.created_at) }}</p>
+            <div class="msg author"><b>{{ current.author_name }}</b><p>{{ current.description }}</p><p v-if="current.attachment_name" class="small muted">📎 {{ current.attachment_name }}</p></div>
+            <div v-for="m in current.messages" :class="['msg', m.is_internal ? 'note' : m.sender_role]">
+              <b>{{ m.is_internal ? '🔒 Internal note · ' : '' }}{{ m.sender_name }}</b> <span class="small muted">{{ fmt(m.created_at) }}</span><p>{{ m.body }}</p></div>
+            <h3>Reply to author <span class="src" v-if="draftSource">{{ draftSource==='ai' ? 'AI draft' : 'Template draft (AI unavailable)' }}</span></h3>
+            <p v-if="draftLoading" class="muted">Generating draft…</p>
+            <textarea v-model="replyText" rows="11"></textarea>
+            <div class="row"><button class="ghost" @click="loadDraft(true)" :disabled="draftLoading">↻ Regenerate draft</button>
+              <button @click="adminReply" :disabled="busy || !replyText.trim()">Send to author</button></div>
+            <h3>Internal note</h3>
+            <form @submit.prevent="addNote" class="reply"><textarea v-model="noteText" rows="2" placeholder="Visible to the team only"></textarea><button class="ghost" :disabled="!noteText.trim()">Add note</button></form>
+          </div>
+          <aside class="card side">
+            <label>Status<select :value="current.status" @change="patch({status: $event.target.value})"><option v-for="s in meta.statuses">{{ s }}</option></select></label>
+            <label>Category <span class="src">{{ current.category_source }}</span><select :value="current.category" @change="patch({category: $event.target.value})"><option v-for="c in meta.categories">{{ c }}</option></select></label>
+            <label>Priority <span class="src">{{ current.priority_source }}</span><select :value="current.priority" @change="patch({priority: $event.target.value})"><option v-for="p in meta.priorities">{{ p }}</option></select></label>
+            <p v-if="current.ai_reason" class="small muted">AI: {{ current.ai_reason }}</p>
+            <p>Owner: <b>{{ current.assigned_to || 'Unassigned' }}</b></p>
+            <button class="ghost" v-if="current.assigned_to_id !== user.id" @click="patch({assign_to_me: true})">Assign to me</button>
+            <button class="ghost" v-else @click="patch({assign_to_me: false})">Unassign</button>
+            <div v-if="current.book" class="bookbox"><h4>{{ current.book.title }}</h4>
+              <p class="small">{{ current.book.status }} · ISBN {{ current.book.isbn }}<br/>Sold {{ current.book.total_copies_sold }} · Earned {{ inr(current.book.total_royalty_earned) }}<br/>
+              Paid {{ inr(current.book.royalty_paid) }} · Pending {{ inr(current.book.royalty_pending) }}<br/>Last payout {{ current.book.last_royalty_payout_date || 'never' }}<br/>
+              {{ current.book.print_partner || '' }} · {{ (current.book.available_on||[]).join(', ') || 'Not listed' }}</p></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </template>
+</div>
+<script src="/static/vendor/vue.global.prod.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
