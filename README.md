@@ -9,9 +9,9 @@ A web app with an **Author Portal** and an **Admin Support Desk**, with AI-assis
 - **Stack:** FastAPI (Python 3.12) · SQLAlchemy 2 · Postgres on Supabase (production) / SQLite (local) · Vue 3 SPA (no build step) · Google Gemini `gemini-3.6-flash` with a keyword/template fallback · hosted on Vercel
 - **Write-up:** [WRITEUP.md](WRITEUP.md)
 
-| Author: new query | Admin: ticket with AI draft |
+| Author raises a query | Admin: Gemini category, priority, reason and drafted reply |
 |---|---|
-| ![Author raising a query](docs/screenshots/2-author-new-ticket.png) | ![Admin ticket with AI draft](docs/screenshots/5-admin-ticket-draft.png) |
+| ![Author raising a royalty query](docs/screenshots/2-author-new-ticket.png) | ![Admin ticket with Gemini classification and AI draft](docs/screenshots/5-admin-ticket-draft.png) |
 
 ## Features vs the brief
 
@@ -71,6 +71,7 @@ Open http://localhost:8000 for the app, and http://localhost:8000/docs for the i
 - `index.py` at the repo root is the Vercel Python entrypoint; it imports the FastAPI app from `backend/`, which also serves the SPA. `vercel.json` sets the framework and bundles `backend/` and `frontend/`.
 - The database is a free Supabase Postgres in Mumbai (`ap-south-1`), reached through the transaction pooler. The engine uses no client-side pool and no prepared statements, which is what serverless + a pooler needs.
 - On first start, tables are created and the sample data seeded **once**, under a Postgres advisory lock, so concurrent cold starts can't double-seed.
+- Row Level Security is enabled on all Supabase tables with no policies, so Supabase's public REST API (anon/authenticated keys) can't read or change any rows. The app connects as its own role that owns the tables, so it isn't affected.
 - `JWT_SECRET`, `DATABASE_URL` and `GEMINI_API_KEY` are Vercel environment variables, never in the repo. `/api/health` reports DB and AI status without exposing them.
 
 ## Architecture
@@ -101,7 +102,7 @@ backend/app/
 ## AI integration
 
 **Flow**
-1. **Ticket created:** keyword rules classify it instantly (so a ticket is never unclassified), the API returns 201 immediately, then a **background task** asks Gemini for `{category, priority, reason}` in JSON mode. The author never waits on the AI.
+1. **Ticket created:** keyword rules classify it instantly (so a ticket is never unclassified), the API returns 201 immediately, then a **background task** asks Gemini for `{category, priority, reason}` as JSON output. The author never waits on the AI.
 2. **Admin opens a ticket:** `GET /api/admin/tickets/{id}/draft` generates a reply draft, **caches it on the ticket**, and returns `source: ai|rules`. "Regenerate" forces a fresh one. The admin edits it and sends it, and it appears in the author's thread.
 
 **Prompt strategy** (`ai/prompts.py`)
@@ -158,17 +159,21 @@ All routes except login, health and meta need `Authorization: Bearer <token>`. E
 ## Known limitations / what I'd improve
 - Replace polling with SSE or WebSockets plus a pub/sub (Redis) for multi-instance deployments.
 - Move AI work to a real queue (RQ/Celery) with retries and dead-lettering. FastAPI background tasks are in-process.
-- Alembic migrations (tables are currently created by SQLAlchemy on startup), Row Level Security on the Supabase tables, real file uploads to S3, password reset, rate limiting on login.
+- Alembic migrations (tables are currently created by SQLAlchemy on startup), real file uploads to S3, password reset, rate limiting on login.
 - Evaluate classification on a labelled set of real tickets, and track override rate as a quality metric. Feed admin edits back as few-shot examples.
 - Retrieval over the full help-centre (embeddings) once the KB grows beyond a few sections. Response caching for near-duplicate queries.
 - Email notifications to authors when a reply is sent.
 
 ## Screenshots
 
-| | |
+| ![Login](docs/screenshots/0-login.png) | ![Author: My Books with sales and royalties](docs/screenshots/1-author-books.png) |
 |---|---|
-| ![Login](docs/screenshots/0-login.png) | ![Author: My Books](docs/screenshots/1-author-books.png) |
-| ![Author: ticket thread](docs/screenshots/3-author-ticket.png) | ![Admin: ticket queue](docs/screenshots/4-admin-queue.png) |
+| **Login** | **My Books:** sales, royalty earned, paid and pending per book |
+| ![Author: ticket created](docs/screenshots/3-author-ticket.png) | ![Admin: ticket queue with AI labels](docs/screenshots/4-admin-queue.png) |
+| **Ticket created:** the author sees it immediately | **Admin queue:** Gemini set each category and priority (`ai` badges); sorted by urgency |
 | ![Author sees the reply](docs/screenshots/6-author-sees-reply.png) | |
+| **Author sees the admin's reply** (the Gemini draft, sent from the desk) without refreshing | |
+
+Screenshots were taken from a local run with Gemini enabled and realistic sample tickets.
 
 The approach write-up (one page) is in [WRITEUP.md](WRITEUP.md).
