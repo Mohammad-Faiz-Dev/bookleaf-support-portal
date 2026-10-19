@@ -1,9 +1,10 @@
 """Prompt templates. Classification is cheap (no KB, tiny output); drafting gets only
 the relevant KB section plus the facts for the one book the ticket is about."""
-from ..models import Category, Priority
+from ..models import Category, Priority, TicketStatus
 
 CATEGORIES = [c.value for c in Category]
 PRIORITIES = [p.value for p in Priority]
+STATUSES = [s.value for s in TicketStatus]
 
 CLASSIFY_SYSTEM = f"""You triage author support tickets for BookLeaf Publishing, a self-publishing company.
 Return ONLY a JSON object: {{"category": ..., "priority": ..., "reason": "<max 20 words>"}}.
@@ -36,9 +37,34 @@ numbers, dates or promises that aren't supported there. Rules:
 - Own BookLeaf's mistakes plainly. No generic AI phrases ("I hope this email finds you well", "rest assured").
 - If escalation/investigation is needed, state a concrete timeline from the policy.
 - End with a clear next step. Sign off as "Warm regards,\\nBookLeaf Author Support".
-- Plain text, 120-220 words, no markdown headings."""
+- Plain text, 120-220 words, no markdown headings.
+
+The ticket status is provided. Tailor the tone and content accordingly:
+- Open: Initial acknowledgment, set expectations for investigation/response time.
+- In Progress: Update on ongoing work, next steps, timeline.
+- Resolved: Confirm resolution, summarize what was done, offer further help if needed.
+- Closed: Polite closure, thank the author, note if reopening is possible.
+"""
 
 
-def draft_user(kb: str, author_data: str, category: str, subject: str, description: str) -> str:
+def draft_user(kb: str, author_data: str, category: str, subject: str, description: str, status: str = "Open") -> str:
     return (f"<kb>\n{kb}\n</kb>\n\n<author_data>\n{author_data}\n</author_data>\n\n"
-            f"<ticket category=\"{category}\">\nSubject: {subject}\n{description[:2000]}\n</ticket>")
+            f"<ticket category=\"{category}\" status=\"{status}\">\nSubject: {subject}\n{description[:2000]}\n</ticket>")
+
+
+PROFESSIONALIZE_SYSTEM = """You are a professional editor for BookLeaf Publishing author support.
+Rewrite the user's rough draft into a polished, professional email reply suitable for sending to an author.
+Preserve ALL the key facts, intentions, numbers, and next steps from the original text. Do not invent new information.
+Make it clear, concise, empathetic, and action-oriented.
+Address the author by first name if mentioned, otherwise use a polite greeting.
+End with "Warm regards,\\nBookLeaf Author Support".
+Plain text, 100-250 words. No markdown.
+
+Ticket status context (if provided): adjust tone slightly (e.g. more formal for Closed, more reassuring for Open).
+"""
+
+
+def professionalize_user(rough_text: str, status: str | None = None, author_first_name: str | None = None) -> str:
+    status_line = f"Ticket status: {status}\n" if status else ""
+    name_line = f"Author first name: {author_first_name}\n" if author_first_name else ""
+    return f"{status_line}{name_line}Rough draft to professionalize:\n{rough_text[:3000]}"
