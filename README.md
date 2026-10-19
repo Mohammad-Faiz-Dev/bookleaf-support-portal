@@ -51,7 +51,7 @@ uvicorn app.main:app --reload --port 8000
 
 Open http://localhost:8000 for the app, and http://localhost:8000/docs for the interactive OpenAPI (Swagger) docs. Locally it uses SQLite (`backend/bookleaf.db`), created and seeded automatically on first start; delete the file to reset. Set `DATABASE_URL` to use Postgres instead.
 
-**Tests:** `cd backend && python -m pytest -q` (15 tests). They cover auth, RBAC, validation, the full ticket lifecycle, internal-note privacy, AI fallback on 429/5xx, the Gemini request format, and KB scoping in prompts. AI calls are mocked; no real API is hit.
+**Tests:** `cd backend && python -m pytest -q` (16 tests). They cover auth, RBAC, validation, the full ticket lifecycle, internal-note privacy, AI fallback on 429/5xx, the Gemini request format, and KB scoping in prompts. AI calls are mocked; no real API is hit.
 
 **Docker:** `docker build -t bookleaf . && docker run -p 8000:8000 -e GEMINI_API_KEY=... -e JWT_SECRET=... bookleaf`.
 
@@ -112,7 +112,7 @@ backend/app/
 **Cost awareness**
 - The KB is **split into sections** (`knowledge_base.py`), and each draft call sends company basics, one category section and tone (~250 tokens) instead of the whole document.
 - Only the relevant book's fields are sent, not the author's whole catalogue or ticket history. Descriptions are truncated (1.5k chars for classification, 2k for drafting).
-- Classification uses no KB and ~80 output tokens. Drafts are capped at 400 tokens and **cached** (no re-billing on every page view).
+- Classification uses no KB and ~80 output tokens. Drafts are capped at 450 tokens and **cached** (no re-billing on every page view).
 - Token usage is logged per call (`bookleaf.ai` logger), for monitoring.
 
 **Graceful degradation**

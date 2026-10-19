@@ -50,7 +50,7 @@ def test_ai_invalid_label_falls_back():
 def test_rate_limit_and_outage_degrade_gracefully():
     for status in (429, 503):
         c = _client(lambda req, s=status: httpx.Response(s))
-        text, src = service.draft_reply(_ticket("Royalty", "where is my royalty", "Royalty & Payments"), c)
+        text, src = service.draft_reply(_ticket("Royalty", "where is my royalty", "Royalty & Payments"), client=c)
         assert src == "rules" and "₹3,570" in text
 
 
@@ -61,10 +61,10 @@ def test_draft_prompt_sends_only_relevant_kb():
         seen["body"] = json.loads(req.content)
         return httpx.Response(200, json={"choices": [{"message": {"content": "Dear Priya, " + "x" * 100}}]})
 
-    text, src = service.draft_reply(_ticket("ISBN", "wrong isbn", "ISBN & Metadata Issues"), _client(handler))
+    text, src = service.draft_reply(_ticket("ISBN", "wrong isbn", "ISBN & Metadata Issues"), client=_client(handler))
     user_msg = seen["body"]["messages"][1]["content"]
     assert src == "ai" and "ISBN policy" in user_msg and "Royalty policy" not in user_msg and "Printing &" not in user_msg
-    assert "royalty_pending=3570" in user_msg and seen["body"]["max_tokens"] <= 400
+    assert "royalty_pending=3570" in user_msg and seen["body"]["max_tokens"] <= 450
 
 
 def test_kb_context_has_tone_for_every_category():

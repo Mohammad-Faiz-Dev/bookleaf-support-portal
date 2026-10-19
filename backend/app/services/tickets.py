@@ -127,8 +127,11 @@ def list_admin(db: Session, *, status=None, category=None, priority=None, date_f
 
 
 def _messages(t: Ticket, include_internal: bool) -> list[schemas.MessageOut]:
-    return [schemas.MessageOut.model_validate(m) for m in t.messages
-            if include_internal or not m.is_internal]
+    # sender_name / sender_role live on the related User, not on TicketMessage, so map them explicitly
+    # (MessageOut.model_validate(m) fails with a 500 on any ticket that has messages).
+    return [schemas.MessageOut(id=m.id, body=m.body, is_internal=m.is_internal, created_at=m.created_at,
+                               sender_name=m.sender.name, sender_role=m.sender.role)
+            for m in t.messages if include_internal or not m.is_internal]
 
 
 def _base(t: Ticket) -> dict:

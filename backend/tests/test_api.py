@@ -82,3 +82,20 @@ def test_filters_and_404(client, admin):
     assert client.get("/api/admin/tickets?priority=Bogus", headers=admin).status_code == 422
     assert client.get("/api/admin/tickets?assigned=me", headers=admin).status_code == 200
     assert client.get("/api/admin/tickets/99999", headers=admin).json()["error"]["code"] == "ticket_not_found"
+
+
+def test_resolved_ticket_with_messages_opens_for_author_and_admin(client, priya, admin):
+    """Regression: ticket detail with messages returned 500 (MessageOut lacked sender_name/role)."""
+    t = client.post("/api/me/tickets", headers=priya, json={
+        "subject": "Last pages of every copy are blank", "description": "Readers say the last 5 pages are blank."}).json()
+    assert client.post(f"/api/admin/tickets/{t['id']}/responses", headers=admin, json={"body": "We are reprinting."}).status_code == 201
+    assert client.post(f"/api/admin/tickets/{t['id']}/notes", headers=admin, json={"body": "internal"}).status_code == 201
+    assert client.patch(f"/api/admin/tickets/{t['id']}", headers=admin, json={"status": "Resolved"}).status_code == 200
+    for _ in range(3):
+        a = client.get(f"/api/me/tickets/{t['id']}", headers=priya)
+        assert a.status_code == 200, a.text
+        assert a.json()["status"] == "Resolved"
+        assert [(m["sender_role"], m["is_internal"]) for m in a.json()["messages"]] == [("admin", False)]
+        d = client.get(f"/api/admin/tickets/{t['id']}", headers=admin)
+        assert d.status_code == 200, d.text
+        assert {m["sender_name"] for m in d.json()["messages"]} == {"Ops Admin"}
