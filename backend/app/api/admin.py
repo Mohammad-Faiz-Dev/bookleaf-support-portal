@@ -10,6 +10,7 @@ from ..db import get_db
 from ..models import Ticket, User
 from ..security import require_admin
 from ..services import tickets as svc
+from ..ai import service as ai
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -46,8 +47,21 @@ def update(ticket_id: int, body: schemas.TicketUpdate, admin: User = Depends(req
 
 
 @router.get("/tickets/{ticket_id}/draft", response_model=schemas.DraftOut)
-def draft(ticket_id: int, regenerate: bool = False, db: Session = Depends(get_db)):
-    return svc.get_or_create_draft(db, svc.get_ticket(db, ticket_id), regenerate)
+def draft(ticket_id: int, regenerate: bool = False, status: str | None = Query(None), db: Session = Depends(get_db)):
+    return svc.get_or_create_draft(db, svc.get_ticket(db, ticket_id), regenerate, status=status)
+
+
+class ProfessionalizeIn(schemas.BaseModel):
+    text: str
+    status: str | None = None
+
+
+@router.post("/tickets/{ticket_id}/professionalize", response_model=schemas.DraftOut)
+def professionalize(ticket_id: int, body: ProfessionalizeIn, db: Session = Depends(get_db)):
+    t = svc.get_ticket(db, ticket_id)
+    first = t.author.name.split()[0] if t.author else None
+    text, source = ai.professionalize(body.text, status=body.status or t.status, author_first_name=first)
+    return schemas.DraftOut(draft=text, source=source, cached=False)
 
 
 @router.post("/tickets/{ticket_id}/responses", response_model=schemas.AdminTicketDetail, status_code=201)
