@@ -24,12 +24,13 @@ createApp({
     books: [], tickets: [], current: null, replyText: '', noteText: '',
     ticketForm: { book_id: null, subject: '', description: '', attachment_name: null },
     queue: [], stats: {}, filters: { status: '', category: '', priority: '', assigned: '', date_from: '', date_to: '', q: '' },
-    draftSource: '', draftLoading: false, timer: null,
+    draftSource: '', draftLoading: false, proLoading: false, draftStatus: '', theme: localStorage.getItem('theme') || 'light', timer: null,
   }),
   computed: { isAdmin() { return this.user?.role === 'admin'; } },
   watch: { filters: { deep: true, handler() { this.loadQueue(); } } },
   async mounted() {
     this.meta = await api('/api/meta');
+    document.documentElement.setAttribute('data-theme', this.theme);
     if (this.user) this.home();
     this.timer = setInterval(() => this.poll(), POLL_MS);
   },
@@ -56,13 +57,9 @@ createApp({
     async loadQueue() { if (!this.isAdmin) return;
       const qs = new URLSearchParams(Object.entries(this.filters).filter(([, v]) => v)).toString();
       try { [this.queue, this.stats] = await Promise.all([api(`/api/admin/tickets?${qs}`), api('/api/admin/stats')]); } catch (e) { this.error = e.message; } },
-    async openAdmin(id) { this.replyText = ''; this.noteText = ''; this.draftSource = ''; this.error = '';
-      try { this.current = await api(`/api/admin/tickets/${id}`); this.view = 'admin-ticket'; this.loadDraft(false); }
+    async openAdmin(id) { this.replyText = ''; this.noteText = ''; this.draftSource = ''; this.error = ''; this.draftStatus = '';
+      try { this.current = await api(`/api/admin/tickets/${id}`); this.view = 'admin-ticket'; this.draftStatus = this.current.status || 'Open'; this.loadDraft(false); }
       catch (e) { this.error = e.message; if (e.status === 401) this.logout(); } },
-    async loadDraft(regenerate) { this.draftLoading = true;
-      try { const d = await api(`/api/admin/tickets/${this.current.id}/draft?regenerate=${regenerate}`); this.replyText = d.draft; this.draftSource = d.source; }
-      catch (e) { this.draftSource = ''; this.error = 'Could not generate a draft. Please write the reply manually.'; }
-      finally { this.draftLoading = false; } },
     async adminReply() { await this.run(async () => { this.current = await api(`/api/admin/tickets/${this.current.id}/responses`, { method: 'POST', body: { body: this.replyText } }); this.replyText = ''; this.flash = 'Reply sent to the author.'; }); },
     async addNote() { await this.run(async () => { this.current = await api(`/api/admin/tickets/${this.current.id}/notes`, { method: 'POST', body: { body: this.noteText } }); this.noteText = ''; }); },
     async patch(body) { await this.run(async () => { this.current = await api(`/api/admin/tickets/${this.current.id}`, { method: 'PATCH', body }); }); },
@@ -79,5 +76,32 @@ createApp({
     ageLabel: h => h < 1 ? '<1h' : h < 48 ? `${Math.round(h)}h` : `${Math.round(h / 24)}d`,
     statusColor: s => ({ 'Open': 'blue', 'In Progress': 'amber', 'Resolved': 'green', 'Closed': 'grey' }[s]),
     srcTitle: s => ({ ai: 'Set by AI', rules: 'Set by keyword fallback', admin: 'Overridden by admin' }[s]),
+    toggleTheme() {
+      this.theme = this.theme === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', this.theme);
+      localStorage.setItem('theme', this.theme);
+    },
+    async loadDraft(regenerate) {
+      this.draftLoading = true;
+      const status = this.draftStatus || this.current?.status || 'Open';
+      try {
+        const d = await api(`/api/admin/tickets/${this.current.id}/draft?regenerate=${regenerate}&status=${encodeURIComponent(status)}`);
+        this.replyText = d.draft; this.draftSource = d.source;
+      } catch (e) { this.draftSource = ''; this.error = 'Could not generate a draft. Please write the reply manually.'; }
+      finally { this.draftLoading = false; }
+    },
+    async professionalize() {
+      if (!this.replyText.trim()) return;
+      this.proLoading = true; this.error = '';
+      try {
+        const d = await api(`/api/admin/tickets/${this.current.id}/professionalize`, {
+          method: 'POST',
+          body: { text: this.replyText, status: this.draftStatus || this.current?.status }
+        });
+        this.replyText = d.draft; this.draftSource = d.source + ' (professionalized)';
+        this.flash = 'Reply professionalized.';
+      } catch (e) { this.error = 'Could not professionalize. ' + (e.message || ''); }
+      finally { this.proLoading = false; }
+    },
   },
 }).mount('#app');
