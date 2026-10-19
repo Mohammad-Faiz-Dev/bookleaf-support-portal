@@ -32,7 +32,7 @@
         </template>
         <template v-else><a :class="{on: true}" @click="go('queue')">Ticket Queue</a></template>
       </nav>
-      <span class="muted">{{ user.name }} · <a @click="logout">Log out</a></span>
+      <span class="muted">{{ user.name }} · <button class="theme-btn" @click="toggleTheme" title="Toggle theme">{{ theme === 'dark' ? '☀' : '☾' }}</button> · <a @click="logout">Log out</a></span>
     </header>
     <main>
       <p v-if="error" class="err">{{ error }}</p>
@@ -134,10 +134,20 @@
             <div v-for="m in current.messages" :class="['msg', m.is_internal ? 'note' : m.sender_role]">
               <b>{{ m.is_internal ? '🔒 Internal note · ' : '' }}{{ m.sender_name }}</b> <span class="small muted">{{ fmt(m.created_at) }}</span><p>{{ m.body }}</p></div>
             <h3>Reply to author <span class="src" v-if="draftSource">{{ draftSource==='ai' ? 'AI draft' : 'Template draft (AI unavailable)' }}</span></h3>
+            <div class="draft-controls">
+              <label class="inline">Generate for status
+                <select v-model="draftStatus">
+                  <option v-for="s in meta.statuses" :value="s">{{ s }}</option>
+                </select>
+              </label>
+              <button class="ghost small" @click="loadDraft(true)" :disabled="draftLoading">Generate draft</button>
+              <button class="ghost small" @click="professionalize" :disabled="busy || !replyText.trim() || proLoading">{{ proLoading ? 'Polishing…' : 'Professionalize' }}</button>
+            </div>
             <p v-if="draftLoading" class="muted">Generating draft…</p>
-            <textarea v-model="replyText" rows="11"></textarea>
-            <div class="row"><button class="ghost" @click="loadDraft(true)" :disabled="draftLoading">↻ Regenerate draft</button>
-              <button @click="adminReply" :disabled="busy || !replyText.trim()">Send to author</button></div>
+            <textarea v-model="replyText" rows="11" placeholder="Write a rough reply or generate an AI draft…"></textarea>
+            <div class="row" style="margin-top:10px">
+              <button @click="adminReply" :disabled="busy || !replyText.trim()">Send to author</button>
+            </div>
             <h3>Internal note</h3>
             <form @submit.prevent="addNote" class="reply"><textarea v-model="noteText" rows="2" placeholder="Visible to the team only"></textarea><button class="ghost" :disabled="!noteText.trim()">Add note</button></form>
           </div>
