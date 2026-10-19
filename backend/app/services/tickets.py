@@ -1,62 +1,50 @@
 """Ticket domain logic, kept out of the route handlers."""
 import logging
-from datetime import datetime, time
-from typing import Any
+from datetime import datetime
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session, selectinload
 
 from .. import schemas
 from ..ai import service as ai
 from ..ai.llm import LLMClient
 from ..db import SessionLocal
-from ..models import Author, Book, Ticket, TicketMessage, TicketStatus, User, utcnow
-from ..security import hash_password
+from ..errors import ApiError
+from ..models import Book, Ticket, TicketMessage, TicketStatus, User, utcnow
 
 log = logging.getLogger("bookleaf.tickets")
 
-# Open tickets first, then by priority rank, then oldest
+_PRIORITY_ORDER = case({"Critical": 0, "High": 1, "Medium": 2, "Low": 3}, value=Ticket.priority, else_=4)
 _OPEN_FIRST = case({"Open": 0, "In Progress": 1, "Resolved": 2, "Closed": 3}, value=Ticket.status, else_=4)
-_PRIORITY_RANK = case({"Critical": 0, "High": 1, "Medium": 2, "Low": 3}, value=Ticket.priority, else_=4)
 
 
-def get_ticket(db: Session, ticket_id: int) -> Ticket:
-    t = db.get(Ticket, ticket_id)
-    if not t:
-        from ..errors import NotFound
-        raise NotFound("Ticket not found")
+def _q():
+    return select(Ticket).options(selectinload(Ticket.messages).selectinload(TicketMessage.sender),
+                                  selectinload(Ticket.book), selectinload(Ticket.author), selectinload(Ticket.assigned_to))
+
+
+def get_ticket(db: Session, ticket_id: int, author_id: str | None = None) -> Ticket:
+    t = db.scalar(_q().where(Ticket.id == ticket_id))
+    # Authors get 404 (not 403) for others' tickets so IDs can't be probed.
+    if not t or (author_id and t.author_id != author_id):
+        raise ApiError(404, "ticket_not_found", f"Ticket {ticket_id} not found.")
     return t
 
 
-def list_author(db: Session, author_id: str) -> list[Ticket]:
-    return list(db.scalars(
-        select(Ticket).where(Ticket.author_id == author_id)
-        .options(selectinload(Ticket.book), selectinload(Ticket.messages))
-        .order_by(Ticket.updated_at.desc())
-    ))
-
-
-def list_admin(db: Session, *, status, category, priority, date_from, date_to, assigned, q, admin: User) -> list[Ticket]:
-    stmt = select(Ticket).options(selectinload(Ticket.book), selectinload(Ticket.author), selectinload(Ticket.assignee))
-    if status:
-        stmt = stmt.where(Ticket.status == status)
-    if category:
-        stmt = stmt.where(Ticket.category == category)
-    if priority:
-        stmt = stmt.where(Ticket.priority == priority)
-    if date_from:
-        stmt = stmt.where(Ticket.created_at >= date_from)
-    if date_to:
-        stmt = stmt.where(Ticket.created_at <= date_to)
-    if assigned == "me":
-        stmt = stmt.where(Ticket.assigned_to_id == admin.id)
-    elif assigned == "unassigned":
-        stmt = stmt.where(Ticket.assigned_to_id.is_(None))
-    if q:
-        like = f"%{q}%"
-        stmt = stmt.where(or_(Ticket.subject.ilike(like), Ticket.description.ilike(like)))
-    stmt = stmt.order_by(_OPEN_FIRST, _PRIORITY_RANK, Ticket.created_at)
-    return list(db.scalars(stmt))
+def create_ticket(db: Session, author_id: str, data: schemas.TicketCreate) -> Ticket:
+    if data.book_id:
+        book = db.get(Book, data.book_id)
+        if not book or book.author_id != author_id:
+            raise ApiError(422, "invalid_book", "Selected book does not belong to your account.",
+                           [{"field": "book_id", "message": "unknown book"}])
+    t = Ticket(author_id=author_id, book_id=data.book_id, subject=data.subject,
+               description=data.description, attachment_name=data.attachment_name)
+    # Instant rules-based triage so the ticket is never unclassified; AI refines it in the background.
+    from ..ai import rules
+    t.category, t.priority = rules.classify(data.subject, data.description)
+    db.add(t)
+    db.commit()
+    return get_ticket(db, t.id)
 
 
 def ai_classify_ticket(ticket_id: int, client: LLMClient | None = None) -> None:
@@ -112,45 +100,65 @@ def update_ticket(db: Session, t: Ticket, admin: User, data: schemas.TicketUpdat
     return get_ticket(db, t.id)
 
 
-def admin_summary(t: Ticket) -> schemas.AdminTicketSummary:
-    return schemas.AdminTicketSummary(
-        id=t.id, subject=t.subject, status=t.status, category=t.category, priority=t.priority,
-        category_source=t.category_source, priority_source=t.priority_source,
-        author_name=t.author.name, author_email=t.author.email,
-        book_title=t.book.title if t.book else None,
-        assigned_to=t.assignee.name if t.assignee else None,
-        response_count=sum(1 for m in t.messages if not m.is_internal),
-        created_at=t.created_at, updated_at=t.updated_at,
-        age_hours=(utcnow() - t.created_at).total_seconds() / 3600,
-    )
+def list_admin(db: Session, *, status=None, category=None, priority=None, date_from: datetime | None = None,
+               date_to: datetime | None = None, assigned: str | None = None, q: str | None = None,
+               admin: User | None = None) -> list[Ticket]:
+    stmt = _q()
+    if status:
+        stmt = stmt.where(Ticket.status == status)
+    if category:
+        stmt = stmt.where(Ticket.category == category)
+    if priority:
+        stmt = stmt.where(Ticket.priority == priority)
+    if date_from:
+        stmt = stmt.where(Ticket.created_at >= date_from)
+    if date_to:
+        stmt = stmt.where(Ticket.created_at <= date_to)
+    if assigned == "me" and admin:
+        stmt = stmt.where(Ticket.assigned_to_id == admin.id)
+    elif assigned == "unassigned":
+        stmt = stmt.where(Ticket.assigned_to_id.is_(None))
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(Ticket.subject.ilike(like) | Ticket.description.ilike(like))
+    # Open first, then by priority, then oldest
+    stmt = stmt.order_by(_OPEN_FIRST, _PRIORITY_ORDER, Ticket.created_at)
+    return list(db.scalars(stmt))
 
 
-def admin_detail(t: Ticket) -> schemas.AdminTicketDetail:
-    return schemas.AdminTicketDetail(
-        id=t.id, subject=t.subject, description=t.description, status=t.status,
-        category=t.category, priority=t.priority,
-        category_source=t.category_source, priority_source=t.priority_source,
-        ai_reason=t.ai_reason, attachment_name=t.attachment_name,
-        author_name=t.author.name, author_email=t.author.email, author_id=t.author_id,
-        book=t.book, assigned_to=t.assignee.name if t.assignee else None, assigned_to_id=t.assigned_to_id,
-        messages=[schemas.MessageOut.model_validate(m) for m in t.messages],
-        created_at=t.created_at, updated_at=t.updated_at,
-    )
+def _messages(t: Ticket, include_internal: bool) -> list[schemas.MessageOut]:
+    return [schemas.MessageOut.model_validate(m) for m in t.messages
+            if include_internal or not m.is_internal]
 
 
-def author_detail(t: Ticket) -> schemas.AuthorTicketDetail:
-    return schemas.AuthorTicketDetail(
-        id=t.id, subject=t.subject, description=t.description, status=t.status,
-        book_title=t.book.title if t.book else None, attachment_name=t.attachment_name,
-        messages=[schemas.MessageOut.model_validate(m) for m in t.messages if not m.is_internal],
-        created_at=t.created_at, updated_at=t.updated_at,
-    )
+def _base(t: Ticket) -> dict:
+    return dict(id=t.id, subject=t.subject, status=t.status, category=t.category, priority=t.priority,
+                book_id=t.book_id, book_title=t.book.title if t.book else None, created_at=t.created_at,
+                updated_at=t.updated_at,
+                response_count=sum(1 for m in t.messages if not m.is_internal and m.sender.role == "admin"))
 
 
-def author_summary(t: Ticket) -> schemas.AuthorTicketSummary:
-    return schemas.AuthorTicketSummary(
-        id=t.id, subject=t.subject, status=t.status,
-        book_title=t.book.title if t.book else None,
-        response_count=sum(1 for m in t.messages if not m.is_internal),
-        created_at=t.created_at, updated_at=t.updated_at,
-    )
+def author_summary(t):
+    return schemas.TicketSummary(**_base(t))
+
+
+def author_detail(t):
+    return schemas.TicketDetail(**_base(t), description=t.description, attachment_name=t.attachment_name,
+                                messages=_messages(t, False))
+
+
+def _admin_base(t):
+    return dict(**_base(t), author_id=t.author_id, author_name=t.author.name, category_source=t.category_source,
+                priority_source=t.priority_source, assigned_to=t.assigned_to.name if t.assigned_to else None,
+                age_hours=round((utcnow() - t.created_at).total_seconds() / 3600, 1))
+
+
+def admin_summary(t):
+    return schemas.AdminTicketSummary(**_admin_base(t))
+
+
+def admin_detail(t):
+    return schemas.AdminTicketDetail(**_admin_base(t), description=t.description, attachment_name=t.attachment_name,
+                                     ai_reason=t.ai_reason, assigned_to_id=t.assigned_to_id, author_email=t.author.email,
+                                     book=schemas.BookOut.model_validate(t.book) if t.book else None,
+                                     messages=_messages(t, True))
